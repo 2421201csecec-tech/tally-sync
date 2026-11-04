@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: tallysync
+      POSTGRES_USER: tally
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+  api:
+    build: .
+    depends_on: [db]
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: postgresql://tally:change-me@db:5432/tallysync
+      SECRET_KEY: change-this-to-a-long-random-string
+      PUBLIC_URL: http://172.18.0.1:8000     # the URL your browser (and agents) use
+      HTTPS_ONLY: "0"                        # set to 1 behind HTTPS in production
+    volumes:
+      - ./downloads:/app/downloads
+volumes:
+  pgdata:

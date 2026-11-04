@@ -1,0 +1,5 @@
+# the agent itself needs nothing (standard library only)
+# tray icon + building the exe:
+pystray
+pillow
+pyinstaller

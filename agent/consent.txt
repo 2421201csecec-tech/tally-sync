@@ -1,0 +1,15 @@
+TALLY SYNC AGENT - WHAT THIS PROGRAM DOES
+
+This program runs in the background on this computer and talks to TallyPrime
+on this computer (or the Tally PC you configure).
+
+After you approve it on the Tally Sync website, it READS:
+  - ledgers (names, groups, balances)
+  - stock items (names, units, quantity and value)
+  - vouchers (sales, purchases, receipts, payments and their entries)
+from ONLY the Tally companies you tick on your dashboard.
+
+It does not change or delete anything in Tally.
+Data is sent over an encrypted (HTTPS) connection to your Tally Sync account.
+You can pause it from the tray icon, or revoke it from the website at any time.
+Uninstalling removes the program; you can also ask us to delete your synced data.

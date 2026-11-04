@@ -1,0 +1,6 @@
+{
+  "tally_url": "http://172.30.0.2:9000",
+  "api_url": "http://localhost:8000",
+  "since": "2023-04-01",
+  "poll_seconds": 300
+}
