@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
-
+import merchant_api
 from common import agent_auth, pool, require_enabled, sha256
 import web
 
@@ -18,7 +18,10 @@ app = FastAPI(title="Tally Sync API")
 app.add_middleware(SessionMiddleware, secret_key=os.environ["SECRET_KEY"],
                    https_only=os.getenv("HTTPS_ONLY", "0") == "1",
                    same_site="lax", max_age=14 * 86400)
+
+
 app.include_router(web.router)
+app.include_router(merchant_api.router, prefix="/api")
 
 PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no look-alike characters
