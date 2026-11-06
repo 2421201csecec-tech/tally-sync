@@ -1,4 +1,5 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is the Tally Sync merchant frontend. FastAPI remains the backend; the
+Next.js app proxies `/api/*` and `/v1/*` to it.
 
 ## Getting Started
 
@@ -12,6 +13,12 @@ yarn dev
 pnpm dev
 # or
 bun dev
+```
+
+Set `BACKEND_URL` when FastAPI is not running on `http://localhost:8000`:
+
+```bash
+BACKEND_URL=http://localhost:8000 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.

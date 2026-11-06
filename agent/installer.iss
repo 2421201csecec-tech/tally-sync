@@ -7,12 +7,7 @@ AppId={{B6A3C1E0-5D2F-4C57-9E1B-7A1F0C9D2E44}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=Your Company Name
-DefaultDirName={localappdata}\TallySyncimport hmac
-import html
-import os
-import secrets
-
-from 
+DefaultDirName={localappdata}\TallySync
 DisableProgramGroupPage=yes
 DisableDirPage=yes
 ; per-user install: NO administrator / UAC prompt

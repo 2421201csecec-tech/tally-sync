@@ -30,3 +30,5 @@ agent/dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+server/downloads/*.exe

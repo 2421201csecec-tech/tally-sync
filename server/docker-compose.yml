@@ -8,16 +8,34 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tally -d tallysync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   api:
     build: .
-    depends_on: [db]
+    depends_on:
+      db:
+        condition: service_healthy
     ports: ["8000:8000"]
     environment:
       DATABASE_URL: postgresql://tally:change-me@db:5432/tallysync
       SECRET_KEY: change-this-to-a-long-random-string
-      PUBLIC_URL: http://172.18.0.1:8000     # the URL your browser (and agents) use
+      PUBLIC_URL: http://localhost:3000      # public Next.js URL used by the agent
       HTTPS_ONLY: "0"                        # set to 1 behind HTTPS in production
     volumes:
       - ./downloads:/app/downloads
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        BACKEND_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_started
+    ports: ["3000:3000"]
+    environment:
+      BACKEND_URL: http://api:8000
 volumes:
   pgdata:
