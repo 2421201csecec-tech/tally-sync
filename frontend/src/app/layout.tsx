@@ -7,7 +7,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   title: "Tally Sync",
-  description: "Securely sync TallyPrime data to the cloud.",
+  description: "Securely sync Tally data to the cloud.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

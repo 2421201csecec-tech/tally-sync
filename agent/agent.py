@@ -11,6 +11,7 @@ Every cycle: reports open Tally companies -> reads which ones the merchant enabl
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -28,7 +29,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-VERSION = "0.2.0"
+VERSION = "0.2.2"
 IS_WIN = os.name == "nt"
 APP_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))      # bundled files
 DATA_DIR = (Path(os.environ.get("APPDATA", Path.home())) / "TallySync") if IS_WIN \
@@ -36,6 +37,7 @@ DATA_DIR = (Path(os.environ.get("APPDATA", Path.home())) / "TallySync") if IS_WI
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = DATA_DIR / "state.json"
 TOKEN_FILE = DATA_DIR / "token.bin"
+HASH_FILE = DATA_DIR / "sent_hashes.json"      # fingerprints of vouchers already uploaded (older Tally)
 BATCH_SIZE = 200
 
 log = logging.getLogger("agent")
@@ -134,6 +136,23 @@ def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
+_HASHES = None
+
+
+def _hashes():
+    global _HASHES
+    if _HASHES is None:
+        try:
+            _HASHES = json.loads(HASH_FILE.read_text())
+        except Exception:
+            _HASHES = {}
+    return _HASHES
+
+
+def save_hashes():
+    HASH_FILE.write_text(json.dumps(_hashes()))
+
+
 # ---------------------------------------------------------------- HTTP to our server
 def http_json(method, url, payload=None, token=None, timeout=60):
     data = json.dumps(payload).encode() if payload is not None else None
@@ -194,11 +213,22 @@ _NOPROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def sanitize(raw: bytes) -> str:
     """Tally sometimes emits illegal XML characters (e.g. &#4;). Strip them."""
-    text = raw.decode("utf-8", errors="replace")
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff") or b"\x00" in raw[:20]:
+        text = raw.decode("utf-16", errors="replace")          # some Tally versions reply in UTF-16
+    else:
+        text = raw.decode("utf-8", errors="replace")
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
     return re.sub(r"&#(\d+);",
                   lambda m: "" if int(m.group(1)) < 32 and int(m.group(1)) not in (9, 10, 13) else m.group(0),
                   text)
+
+
+def parse_xml(text: str) -> ET.Element:
+    try:
+        return ET.fromstring(text)
+    except ET.ParseError:                                       # several top-level elements? wrap them
+        body = re.sub(r"^\s*<\?xml[^>]*\?>", "", text)
+        return ET.fromstring("<ROOT>" + body + "</ROOT>")
 
 
 def tally_post(cfg, xml: str, timeout=300) -> ET.Element:
@@ -206,7 +236,7 @@ def tally_post(cfg, xml: str, timeout=300) -> ET.Element:
                                  headers={"Content-Type": "text/xml"})
     try:
         with _NOPROXY.open(req, timeout=timeout) as r:
-            return ET.fromstring(sanitize(r.read()))
+            return parse_xml(sanitize(r.read()))
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         raise TallyError(str(e))
 
@@ -252,13 +282,13 @@ def tdate(s):
     return f"{s[0:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 and s.isdigit() else None
 
 
-def list_companies(cfg):
+def _prime_list_companies(cfg):
     root = tally_post(cfg, collection_xml("AgentCompanies", "Company", "Name"), timeout=30)
     names = [c.get("NAME") or txt(c, "NAME") for c in root.iter("COMPANY")]
     return list(dict.fromkeys(n for n in names if n))
 
 
-def fetch_ledgers(cfg, company):
+def _prime_fetch_ledgers(cfg, company):
     xml = collection_xml("AgentLedgers", "Ledger", "Name, Parent, OpeningBalance, ClosingBalance, GUID, AlterID", company)
     out = []
     for el in tally_post(cfg, xml).iter("LEDGER"):
@@ -271,7 +301,7 @@ def fetch_ledgers(cfg, company):
     return out
 
 
-def fetch_stock_items(cfg, company):
+def _prime_fetch_stock_items(cfg, company):
     xml = collection_xml("AgentStock", "StockItem",
                          "Name, Parent, BaseUnits, ClosingBalance, ClosingValue, GUID, AlterID", company)
     out = []
@@ -300,7 +330,7 @@ def parse_voucher(v):
             inv_entries.append({"item": txt(child, "STOCKITEMNAME"), "rate": txt(child, "RATE"),
                                 "qty": txt(child, "BILLEDQTY"), "amount": num(txt(child, "AMOUNT"))})
     amounts = [abs(e["amount"]) for e in ledger_entries if e["amount"] is not None]
-    return {"guid": txt(v, "GUID"), "alter_id": int(num(txt(v, "ALTERID")) or 0),
+    return {"guid": txt(v, "GUID") or v.get("REMOTEID", ""), "alter_id": int(num(txt(v, "ALTERID")) or 0),
             "date": tdate(txt(v, "DATE")), "type": txt(v, "VOUCHERTYPENAME") or v.get("VCHTYPE", ""),
             "number": txt(v, "VOUCHERNUMBER"), "party": txt(v, "PARTYLEDGERNAME"),
             "narration": txt(v, "NARRATION"),
@@ -309,7 +339,7 @@ def parse_voucher(v):
             "raw": ET.tostring(v, encoding="unicode")}
 
 
-def fetch_vouchers(cfg, company, from_date, to_date, min_alter_id=None):
+def _prime_fetch_vouchers(cfg, company, from_date, to_date, min_alter_id=None):
     formula = f"$AlterID > {int(min_alter_id)}" if min_alter_id is not None else None
     xml = collection_xml("AgentVouchers", "Voucher", VOUCHER_FETCH, company, from_date, to_date, formula)
     vs = [parse_voucher(v) for v in tally_post(cfg, xml).iter("VOUCHER")]
@@ -319,9 +349,99 @@ def fetch_vouchers(cfg, company, from_date, to_date, min_alter_id=None):
     return vs
 
 
-def fetch_voucher_guids(cfg, company, from_date, to_date):
+def _prime_fetch_voucher_guids(cfg, company, from_date, to_date):
     xml = collection_xml("AgentGuids", "Voucher", "GUID", company, from_date, to_date)
     return [txt(v, "GUID") for v in tally_post(cfg, xml).iter("VOUCHER") if txt(v, "GUID")]
+
+
+# ---------------------------------------------------------------- older Tally (ERP 9) support
+# ERP 9 only understands the classic "Export Data" request style. We detect which style the
+# running Tally speaks (TallyPrime style first, then the classic one) and use it from then on.
+def legacy_xml(report, company=None, from_date=None, to_date=None, extra=""):
+    sv = "<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>"
+    if company:
+        sv += f"<SVCURRENTCOMPANY>{escape(company)}</SVCURRENTCOMPANY>"
+    if from_date:
+        sv += f'<SVFROMDATE TYPE="DATE">{from_date:%Y%m%d}</SVFROMDATE>'
+    if to_date:
+        sv += f'<SVTODATE TYPE="DATE">{to_date:%Y%m%d}</SVTODATE>'
+    return ("<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC>"
+            f"<REPORTNAME>{report}</REPORTNAME><STATICVARIABLES>{sv}{extra}</STATICVARIABLES>"
+            "</REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>")
+
+
+def list_companies(cfg):
+    mode = cfg.get("tally_mode")
+    if mode in (None, "prime"):
+        names = _prime_list_companies(cfg)
+        if names:
+            cfg["tally_mode"] = "prime"
+            return names
+    if mode in (None, "legacy"):
+        root = tally_post(cfg, legacy_xml("List of Companies"), timeout=30)
+        names = [(c.text or "").strip() for c in root.iter("COMPANYNAME")
+                 if (c.text or "").strip()]
+        for company in root.iter("COMPANY"):
+            name = company.get("NAME") or txt(company, "NAME")
+            if name:
+                names.append(name)
+        names = list(dict.fromkeys(names))
+        if names:
+            if mode is None:
+                log.info("Older Tally detected: using the classic 'Export Data' requests")
+            cfg["tally_mode"] = "legacy"
+            return names
+    return []
+
+
+def fetch_ledgers(cfg, company):
+    if cfg.get("tally_mode") != "legacy":
+        return _prime_fetch_ledgers(cfg, company)
+    root = tally_post(cfg, legacy_xml("List of Accounts", company, extra="<ACCOUNTTYPE>Ledgers</ACCOUNTTYPE>"))
+    out = []
+    for el in root.iter("LEDGER"):
+        name = el.get("NAME") or txt(el, "NAME")
+        if name:
+            out.append({"guid": txt(el, "GUID") or el.get("REMOTEID") or name, "name": name,
+                        "parent": txt(el, "PARENT"),
+                        "opening_balance": num(txt(el, "OPENINGBALANCE")),
+                        "closing_balance": None,           # not part of the classic master export
+                        "alter_id": int(num(txt(el, "ALTERID")) or 0)})
+    return out
+
+
+def fetch_stock_items(cfg, company):
+    if cfg.get("tally_mode") != "legacy":
+        return _prime_fetch_stock_items(cfg, company)
+    try:
+        root = tally_post(cfg, legacy_xml("List of Accounts", company,
+                                          extra="<ACCOUNTTYPE>Stock Items</ACCOUNTTYPE>"))
+    except (TallyError, ET.ParseError) as e:
+        log.warning("[%s] could not read stock items (%s); continuing without them", company, e)
+        return []
+    out = []
+    for el in root.iter("STOCKITEM"):
+        name = el.get("NAME") or txt(el, "NAME")
+        if name:
+            out.append({"guid": txt(el, "GUID") or el.get("REMOTEID") or name, "name": name,
+                        "parent": txt(el, "PARENT"), "unit": txt(el, "BASEUNITS"),
+                        "closing_qty": None, "closing_value": None,   # needs a Stock Summary report (later)
+                        "alter_id": int(num(txt(el, "ALTERID")) or 0)})
+    return out
+
+
+def fetch_vouchers(cfg, company, from_date, to_date, min_alter_id=None):
+    if cfg.get("tally_mode") != "legacy":
+        return _prime_fetch_vouchers(cfg, company, from_date, to_date, min_alter_id)
+    root = tally_post(cfg, legacy_xml("Day Book", company, from_date, to_date), timeout=300)
+    vs = [parse_voucher(v) for v in root.iter("VOUCHER")]
+    return [v for v in vs if v["guid"]]
+
+
+def fetch_voucher_guids(cfg, company, from_date, to_date):
+    if cfg.get("tally_mode") != "legacy":
+        return _prime_fetch_voucher_guids(cfg, company, from_date, to_date)
+    return [v["guid"] for v in fetch_vouchers(cfg, company, from_date, to_date)]
 
 
 # ---------------------------------------------------------------- sync logic
@@ -331,6 +451,24 @@ def post_vouchers(cfg, company, vouchers):
         api(cfg, "POST", "/v1/ingest/vouchers",
             {"company": company, "batch_id": str(uuid.uuid4()),
              "max_alter_id": max(v["alter_id"] for v in chunk), "vouchers": chunk})
+
+
+def post_changed(cfg, company, vouchers, save=True):
+    """Upload only vouchers whose content differs from what we sent last time. Older Tally may give
+    no usable AlterID, so a fingerprint of each voucher decides what changed. Returns how many were sent."""
+    seen = _hashes().setdefault(company, {})
+    todo = []
+    for v in vouchers:
+        fp = hashlib.sha1(v["raw"].encode("utf-8")).hexdigest()[:16]
+        if seen.get(v["guid"]) != fp:
+            todo.append((v, fp))
+    if todo:
+        post_vouchers(cfg, company, [v for v, _ in todo])      # raises on failure -> nothing marked as sent
+        for v, fp in todo:
+            seen[v["guid"]] = fp
+        if save:
+            save_hashes()
+    return len(todo)
 
 
 def month_ranges(start: dt.date, end: dt.date):
@@ -354,14 +492,20 @@ def initial_voucher_sync(cfg, state, company):
             return
         set_status(f"[{company}] first sync: {m_start:%b %Y}")
         vouchers = fetch_vouchers(cfg, company, m_start, m_end)
-        post_vouchers(cfg, company, vouchers)
+        if cfg.get("tally_mode") == "legacy":
+            post_changed(cfg, company, vouchers, save=False)
+        else:
+            post_vouchers(cfg, company, vouchers)
         if vouchers:
             cs["max_alter_id"] = max(cs["max_alter_id"], max(v["alter_id"] for v in vouchers))
         cs["resume_from"] = m_start.isoformat()
         save_state(state)
         log.info("[%s] %s: %d vouchers", company, m_start.strftime("%b %Y"), len(vouchers))
         STOP.wait(1)                                    # let Tally breathe between chunks
+    if cfg.get("tally_mode") == "legacy":
+        save_hashes()
     cs["initial_done"] = True
+    cs["deep_alter"] = cs["max_alter_id"]
     cs["last_reconcile"] = time.time()
     save_state(state)
 
@@ -390,8 +534,61 @@ def reconcile(cfg, state, company):
     save_state(state)
 
 
+def legacy_incremental(cfg, state, company):
+    """Older Tally: re-read the last ~3 months every cycle (and do a full check of all months once a
+    day). ALTERID may be missing there, so a fingerprint of each voucher decides what changed, and
+    only vouchers whose content changed are uploaded."""
+    cs = state[company]
+    if time.time() - cs.get("last_reconcile", 0) > 86400:
+        return legacy_deep_scan(cfg, state, company)
+    today = dt.date.today()
+    since = max(dt.date.fromisoformat(cfg["since"]), (today.replace(day=1) - dt.timedelta(days=62)).replace(day=1))
+    recent = []
+    for m_start, m_end in month_ranges(since, today + dt.timedelta(days=31)):
+        recent += fetch_vouchers(cfg, company, m_start, m_end)
+    sent = post_changed(cfg, company, recent)
+    if sent:
+        cs["max_alter_id"] = max(cs["max_alter_id"], max(v["alter_id"] for v in recent))
+        save_state(state)
+        log.info("[%s] recent months: %d changed vouchers", company, sent)
+
+
+def legacy_deep_scan(cfg, state, company):
+    cs = state[company]
+    since = dt.date.fromisoformat(cfg["since"])
+    until = dt.date.today() + dt.timedelta(days=31)
+    top, guids, sent_total = cs.get("deep_alter", 0), [], 0
+    for m_start, m_end in month_ranges(since, until):
+        if STOP.is_set() or PAUSED.is_set():
+            return
+        set_status(f"[{company}] daily full check: {m_start:%b %Y}")
+        vs = fetch_vouchers(cfg, company, m_start, m_end)
+        guids += [v["guid"] for v in vs]
+        # Fingerprints decide what changed, so this also works when ALTERID is missing.
+        sent_total += post_changed(cfg, company, vs, save=False)
+        if vs:
+            top = max(top, max(v["alter_id"] for v in vs))
+        STOP.wait(1)
+    cs["deep_alter"] = top
+    cs["max_alter_id"] = max(cs["max_alter_id"], top)
+    if guids:                                              # forget fingerprints of vouchers deleted in Tally
+        seen, alive = _hashes().setdefault(company, {}), set(guids)
+        for g in [g for g in seen if g not in alive]:
+            del seen[g]
+    save_hashes()
+    if guids:
+        res = api(cfg, "POST", "/v1/ingest/reconcile",
+                  {"company": company, "from_date": since.isoformat(), "to_date": until.isoformat(), "guids": guids})
+        log.info("[%s] daily full check: %d changed vouchers uploaded, %s", company, sent_total, res)
+    cs["last_reconcile"] = time.time()
+    save_state(state)
+
+
 def cycle(cfg, state, last_masters):
     discovered = list_companies(cfg)                                  # raises TallyError if unreachable
+    if not discovered:
+        set_status("Tally is running, but no company is open (or it could not be read).")
+        return
     api(cfg, "POST", "/v1/agent/companies", {"companies": discovered})
     enabled = set(api(cfg, "GET", "/v1/agent/settings")["enabled_companies"])
     targets = [c for c in discovered if c in enabled]
@@ -408,6 +605,8 @@ def cycle(cfg, state, last_masters):
             cs = state.get(company)
             if not cs or not cs["initial_done"]:
                 initial_voucher_sync(cfg, state, company)
+            elif cfg.get("tally_mode") == "legacy":
+                legacy_incremental(cfg, state, company)
             else:
                 incremental_voucher_sync(cfg, state, company)
                 if time.time() - cs.get("last_reconcile", 0) > 86400:
@@ -417,9 +616,10 @@ def cycle(cfg, state, last_masters):
     set_status(f"Last sync OK at {dt.datetime.now():%H:%M}")
 
 
-TALLY_HELP = ("Cannot reach TallyPrime.\n\nIn Tally press F1 (Help) > Settings > Connectivity > "
-              "Client/Server configuration, set TallyPrime to act as 'Server' or 'Both' on port 9000, "
-              "then make sure the company is open.")
+TALLY_HELP = ("Cannot reach Tally.\n\nTallyPrime: press F1 (Help) > Settings > Connectivity > "
+              "Client/Server configuration, set it to 'Server' or 'Both', port 9000.\n"
+              "Tally.ERP 9: press F12 (Configure) > Advanced Configuration, set 'Tally.ERP 9 is acting as' "
+              "to 'Both', port 9000.\n\nThen make sure a company is open.")
 
 
 def worker(cfg, once=False):

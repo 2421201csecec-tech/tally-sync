@@ -35,7 +35,7 @@ def require_login(request: Request):
 def home(request: Request):
     if request.session.get("mid"):
         return RedirectResponse("/dashboard", 303)
-    return page(request, "Tally Sync", """<div class="card"><h1>Connect TallyPrime to the cloud</h1>
+    return page(request, "Tally Sync", """<div class="card"><h1>Connect Tally to the cloud</h1>
       <p>Install a small agent on the PC where Tally runs. After you approve it here, it securely syncs
       your ledgers, stock and vouchers. You choose which companies, and you can revoke access any time.</p>
       <a class="btn" href="/signup">Create account</a> <a class="btn alt" href="/login">Log in</a></div>""")
@@ -147,7 +147,7 @@ def dashboard(request: Request):
           else '<p class="warn">The installer has not been uploaded to this server yet.</p>')
     body = f"""<h1>{esc(name)}</h1>
       <div class="card"><h2>1. Install the agent</h2>
-        <p>Run it on the Windows PC where TallyPrime is open. It will open this website to ask your permission.</p>{dl}
+        <p>Run it on the Windows PC where Tally ERP 9 or TallyPrime is open. It will open this website to ask your permission.</p>{dl}
         <p class="muted">Agent shows a code but no page opened? Enter it here:</p>
         <form method="get" action="/pair"><input type="text" name="code" placeholder="ABCD-2345" style="max-width:200px">
         <button class="alt">Continue</button></form></div>

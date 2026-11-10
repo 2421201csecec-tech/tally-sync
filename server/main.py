@@ -183,8 +183,7 @@ def ingest_vouchers(body: VouchersIn, who=Depends(agent_auth)):
                      voucher_number=excluded.voucher_number, party=excluded.party, narration=excluded.narration,
                      amount=excluded.amount, ledger_entries=excluded.ledger_entries,
                      inventory_entries=excluded.inventory_entries, raw=excluded.raw,
-                     is_deleted=false, updated_at=now()
-                   where vouchers.alter_id <= excluded.alter_id""",
+                     is_deleted=false, updated_at=now()""",
                 [(cid, v["guid"], v["alter_id"], v.get("date"), v.get("type"), v.get("number"),
                   v.get("party"), v.get("narration"), v.get("amount"),
                   Jsonb(v.get("ledger_entries", [])), Jsonb(v.get("inventory_entries", [])), v.get("raw"))

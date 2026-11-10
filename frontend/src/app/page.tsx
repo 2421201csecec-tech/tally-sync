@@ -5,7 +5,7 @@ export default function Home() {
     <main className="shell hero">
       <section className="hero-copy">
         <p className="eyebrow">TALLY SYNC</p>
-        <h1>Connect TallyPrime to the cloud, securely.</h1>
+        <h1>Connect Tally to the cloud, securely.</h1>
         <p className="lead">
           Install a small agent on the PC where Tally runs. Approve it here,
           choose the companies it can sync, and keep control of your data.

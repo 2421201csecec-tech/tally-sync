@@ -1,6 +1,6 @@
 TALLY SYNC AGENT - WHAT THIS PROGRAM DOES
 
-This program runs in the background on this computer and talks to TallyPrime
+This program runs in the background on this computer and talks to Tally ERP 9 or TallyPrime
 on this computer (or the Tally PC you configure).
 
 After you approve it on the Tally Sync website, it READS:
