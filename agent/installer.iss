@@ -1,6 +1,6 @@
 ; Inno Setup script -> output\TallySyncSetup.exe
 #define MyAppName "Tally Sync Agent"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.2.2"
 
 [Setup]
 AppId={{B6A3C1E0-5D2F-4C57-9E1B-7A1F0C9D2E44}

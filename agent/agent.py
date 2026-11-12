@@ -29,6 +29,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+
 VERSION = "0.2.2"
 IS_WIN = os.name == "nt"
 APP_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))      # bundled files
@@ -39,6 +40,7 @@ STATE_FILE = DATA_DIR / "state.json"
 TOKEN_FILE = DATA_DIR / "token.bin"
 HASH_FILE = DATA_DIR / "sent_hashes.json"      # fingerprints of vouchers already uploaded (older Tally)
 BATCH_SIZE = 200
+
 
 log = logging.getLogger("agent")
 log.setLevel(logging.INFO)
