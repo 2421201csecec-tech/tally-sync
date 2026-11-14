@@ -1,5 +1,6 @@
-# the agent itself needs nothing (standard library only)
+# runtime dependencies:
 # tray icon + building the exe:
+certifi
 pystray
 pillow
 pyinstaller

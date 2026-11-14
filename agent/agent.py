@@ -18,6 +18,7 @@ import logging.handlers
 import os
 import re
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -26,6 +27,7 @@ import urllib.request
 import uuid
 import webbrowser
 import xml.etree.ElementTree as ET
+import certifi
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -164,7 +166,7 @@ def http_json(method, url, payload=None, token=None, timeout=60):
     if token:
         req.add_header("Authorization", "Bearer " + token)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT) as r:
             return json.loads(r.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         if e.code == 401:
@@ -211,6 +213,7 @@ def pair(cfg) -> bool:
 
 # ---------------------------------------------------------------- Tally access
 _NOPROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 def sanitize(raw: bytes) -> str:
@@ -237,7 +240,7 @@ def tally_post(cfg, xml: str, timeout=300) -> ET.Element:
     req = urllib.request.Request(cfg["tally_url"], data=xml.encode("utf-8"),
                                  headers={"Content-Type": "text/xml"})
     try:
-        with _NOPROXY.open(req, timeout=timeout) as r:
+        with _NOPROXY.open(req, timeout=timeout, context=_SSL_CONTEXT) as r:
             return parse_xml(sanitize(r.read()))
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         raise TallyError(str(e))
